@@ -207,6 +207,7 @@ type external struct {
 	postCreate     func(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.CreateRuleGroupsNamespaceOutput, managed.ExternalCreation, error) (managed.ExternalCreation, error)
 	preDelete      func(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.DeleteRuleGroupsNamespaceInput) (bool, error)
 	postDelete     func(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.DeleteRuleGroupsNamespaceOutput, error) error
+	preUpdate      func(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.PutRuleGroupsNamespaceInput) error
 	update         func(context.Context, cpresource.Managed) (managed.ExternalUpdate, error)
 }
 
@@ -235,6 +236,9 @@ func nopPreDelete(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.Del
 }
 func nopPostDelete(_ context.Context, _ *svcapitypes.RuleGroupsNamespace, _ *svcsdk.DeleteRuleGroupsNamespaceOutput, err error) error {
 	return err
+}
+func nopPreUpdate(context.Context, *svcapitypes.RuleGroupsNamespace, *svcsdk.PutRuleGroupsNamespaceInput) error {
+	return nil
 }
 func nopUpdate(context.Context, cpresource.Managed) (managed.ExternalUpdate, error) {
 	return managed.ExternalUpdate{}, nil

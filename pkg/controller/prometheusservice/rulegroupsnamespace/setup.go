@@ -2,6 +2,7 @@ package rulegroupsnamespace
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	svcsdk "github.com/aws/aws-sdk-go/service/prometheusservice"
+	svcsdkapi "github.com/aws/aws-sdk-go/service/prometheusservice/prometheusserviceiface"
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/connection"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
@@ -16,6 +18,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 
 	svcapitypes "github.com/crossplane-contrib/provider-aws/apis/prometheusservice/v1alpha1"
@@ -40,6 +44,9 @@ func SetupRuleGroupsNamespace(mgr ctrl.Manager, o controller.Options) error {
 			e.postCreate = postCreate
 			e.postDelete = postDelete
 			e.postObserve = postObserve
+			e.isUpToDate = isUpToDate
+			u := &updateClient{client: e.client}
+			e.preUpdate = u.preUpdate
 		},
 	}
 
@@ -136,4 +143,50 @@ func (t *tagger) Initialize(ctx context.Context, mg resource.Managed) error {
 		cr.Spec.ForProvider.Tags[k] = awsclients.String(v)
 	}
 	return errors.Wrap(t.kube.Update(ctx, cr), errKubeUpdateFailed)
+}
+
+// createPatch creates a *svcapitypes.RuleGroupsNamespaceParameters that has only the changed
+// values between the target *svcapitypes.RuleGroupsNamespaceParameters and the current
+// *rulegroupsnamespace.RuleGroupsNamespaceDescription
+func createPatch(in *svcsdk.DescribeRuleGroupsNamespaceOutput, target *svcapitypes.RuleGroupsNamespaceParameters) (*svcapitypes.RuleGroupsNamespaceParameters, error) {
+	currentParams := &svcapitypes.RuleGroupsNamespaceParameters{}
+
+	jsonPatch, err := awsclients.CreateJSONPatch(currentParams, target)
+	if err != nil {
+		return nil, err
+	}
+	patch := &svcapitypes.RuleGroupsNamespaceParameters{}
+	if err := json.Unmarshal(jsonPatch, patch); err != nil {
+		return nil, err
+	}
+	return patch, nil
+}
+
+func isUpToDate(cr *svcapitypes.RuleGroupsNamespace, resp *svcsdk.DescribeRuleGroupsNamespaceOutput) (bool, error) {
+	patch, err := createPatch(resp, &cr.Spec.ForProvider)
+	if err != nil {
+		return false, err
+	}
+	return cmp.Equal(&svcapitypes.RuleGroupsNamespaceParameters{}, patch,
+		cmpopts.IgnoreTypes(&xpv1.Reference{}, &xpv1.Selector{}, []xpv1.Reference{}),
+		cmpopts.IgnoreFields(svcapitypes.RuleGroupsNamespaceParameters{}, "Region", "Tags", "CustomRuleGroupsNamespaceParameters")), nil
+}
+
+type updateClient struct {
+	client svcsdkapi.PrometheusServiceAPI
+}
+
+func (e *updateClient) preUpdate(ctx context.Context, cr *svcapitypes.RuleGroupsNamespace, obj *svcsdk.PutRuleGroupsNamespaceInput) error {
+	switch aws.StringValue(cr.Status.AtProvider.Status.StatusCode) {
+	case string(svcapitypes.RuleGroupsNamespaceStatusCode_CREATING), string(svcapitypes.RuleGroupsNamespaceStatusCode_UPDATING), string(svcapitypes.RuleGroupsNamespaceStatusCode_DELETING):
+		return nil
+	}
+
+	newUpdateObj := &svcsdk.PutRuleGroupsNamespaceInput{
+		Name: cr.Spec.ForProvider.Name,
+		Data: cr.Spec.ForProvider.Data,
+	}
+
+	*obj = *newUpdateObj
+	return nil
 }
